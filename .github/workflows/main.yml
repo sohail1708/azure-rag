@@ -11,7 +11,7 @@ on:
   #  branches:
   #    [ main ]
 
-  # Allow mannually trigger
+  # Allow manually trigger
   workflow_dispatch:
 
 jobs:
@@ -60,7 +60,41 @@ jobs:
         with:
           inlineScript: |
             az config set extension.use_dynamic_install=yes_without_prompt
-            az containerapp registry set -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} --server ghcr.io --username  ${{ github.actor }} --password ${{ secrets.PAT }}
-            az containerapp update -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} --set-env-vars OPENAI_API_TYPE=azure OPENAI_API_BASE=https://demo-openai-soh.openai.azure.com/ OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} OPENAI_API_VERSION="2024-08-01-preview" SEARCH_SERVICE_NAME="https://demo-ai-search-so.search.windows.net" SEARCH_API_KEY=${{ secrets.SEARCH_SERVICE_API_KEY }} SEARCH_INDEX_NAME="demo-index-rag"
-            az containerapp update -n demo-container-soh -g demo-container-soh --cpu 2 --memory 4Gi
-            az containerapp update -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} --image ghcr.io/${{ env.REPO }}:${{ github.sha }}
+            
+            echo "Checking if the correct registry is already configured..."
+            REGISTRY_SERVER=$(az containerapp show -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} --query "properties.configuration.registries[0].server" -o tsv)
+
+            if [[ "$REGISTRY_SERVER" != "ghcr.io" ]]; then
+              echo "Registry is incorrect or not set. Updating registry..."
+              az containerapp registry remove -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} --server $REGISTRY_SERVER || echo "No old registry found."
+              az containerapp registry set -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} \
+                --server ghcr.io --username ${{ github.actor }} --password ${{ secrets.PAT }}
+              echo "Registry updated to GitHub Container Registry (ghcr.io)."
+            else
+              echo "Registry is already correctly set to ghcr.io. Skipping registry update."
+            fi
+
+            # Wait for a few seconds to ensure registry settings apply
+            sleep 10
+            
+            # Verify registry update
+            az containerapp show -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} --query "properties.configuration.registries"
+
+            # Update environment variables if needed
+            az containerapp update -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} \
+              --set-env-vars OPENAI_API_TYPE=azure OPENAI_API_BASE=https://demo-openai-soh.openai.azure.com/ \
+              OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} OPENAI_API_VERSION="2024-08-01-preview" \
+              SEARCH_SERVICE_NAME="https://demo-ai-search-so.search.windows.net" SEARCH_API_KEY=${{ secrets.SEARCH_SERVICE_API_KEY }} \
+              SEARCH_INDEX_NAME="demo-index-rag"
+
+            # Adjust container resources
+            az containerapp update -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} --cpu 2 --memory 4Gi
+            
+            # Force the correct image to be used
+            echo "Deploying container image: ghcr.io/${{ env.REPO }}:${{ github.sha }}"
+            az containerapp update -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} \
+              --image ghcr.io/${{ env.REPO }}:${{ github.sha }}
+
+            # Confirm the deployment was successful
+            echo "Verifying deployed container image..."
+            az containerapp show -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} --query "properties.template.containers[0].image"
