@@ -1,4 +1,4 @@
-name: Trigger new auto deployment for demo-container-soh
+name: Trigger auto deployment for demo-container-soh
 
 env:
   AZURE_CONTAINER_APP_NAME: demo-container-soh
